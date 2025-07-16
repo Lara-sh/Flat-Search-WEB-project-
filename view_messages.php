@@ -1,0 +1,113 @@
+<?php
+session_start();
+require_once 'database.inc.php';
+
+if (!isset($_SESSION['user'])) {
+    header("Location: login.php");
+    exit;
+}
+
+$pdo = db_connect();
+
+$userId = $_SESSION['user']['id'];
+$userRole = $_SESSION['user']['role'];
+
+// Use named parameters for security and readability
+$stmt = $pdo->prepare("SELECT * FROM messages WHERE receiver_id = :uid AND receiver_role = :role ORDER BY created_at DESC");
+$stmt->execute([':uid' => $userId, ':role' => $userRole]);
+$messages = $stmt->fetchAll();
+?>
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>View Messages</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <?php include 'header.php'; ?>
+    <div class="container">
+        <?php include 'navigation.php'; ?>
+
+        <main>
+            <h2>Inbox</h2>
+            <table class="messages-table">
+                <thead>
+                    <tr>
+                        <th></th>
+                        <th>Title</th>
+                        <th>Date</th>
+                        <th>Sender</th>
+                        <th>Message</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($messages as $msg): ?>
+                        <tr class="<?= $msg['is_read'] ? 'read' : 'unread' ?>">
+                            <td class="status-icon">
+                                <?php if (!$msg['is_read']): ?>
+                                    <span class="new-icon">🆕</span>
+                                <?php endif; ?>
+                            </td>
+                            <td><?= htmlspecialchars($msg['title']) ?></td>
+                            <td><?= htmlspecialchars($msg['created_at']) ?></td>
+                            <td><?= htmlspecialchars($msg['sender']) ?></td>
+                            <td><?= nl2br(htmlspecialchars($msg['body'])) ?></td>
+                            <td>
+                                <?php
+                                //Manager Approving Flat Logic 
+                                if ($userRole === 'manager' && preg_match('/Ref:\s*FLAT(\d{5})/', $msg['body'], $matches)) {
+                                    $flatRef = 'FLAT' . $matches[1];
+
+                                    $stmtRef = $pdo->prepare("SELECT id FROM flats WHERE ref_number = :ref");
+                                    $stmtRef->execute([':ref' => $flatRef]);
+                                    $flat = $stmtRef->fetch();
+
+                                    if ($flat): ?>
+                                        <form method="post" action="approve_flat.php" style="display:inline;">
+                                            <input type="hidden" name="flat_id" value="<?= htmlspecialchars($flat['id']) ?>">
+                                            <button name="action" value="approve" type="submit">Approve</button>
+                                            <button name="action" value="reject" type="submit">Reject</button>
+                                        </form>
+                                    <?php else:
+                                        echo 'Flat not found';
+                                    endif;
+
+                                    //Owner Handling Preview Request Logic
+                                } elseif ($userRole === 'owner' && strpos($msg['title'], 'Flat Preview Request') !== false) {
+                                    if (preg_match('/Ref\s*(\w+)\s+on\s+(\w+)\s+at\s+([\d:apm\s]+)/i', $msg['body'], $matches)) {
+                                        $flat_ref = $matches[1];
+                                        $day = $matches[2];
+                                        $time = $matches[3];
+                                    ?>
+                                        <form method="post" action="handleAppointment.php" style="display:inline;">
+                                            <input type="hidden" name="flat_ref" value="<?= htmlspecialchars($flat_ref) ?>">
+                                            <input type="hidden" name="day" value="<?= htmlspecialchars($day) ?>">
+                                            <input type="hidden" name="time" value="<?= htmlspecialchars($time) ?>">
+                                            <input type="hidden" name="customer_id" value="<?= htmlspecialchars($msg['sender_id']) ?>">
+                                            <button name="action" value="accept" type="submit">Accept</button>
+                                            <button name="action" value="reject" type="submit">Reject</button>
+                                        </form>
+                                <?php
+                                    } else {
+                                        echo 'Invalid format';
+                                    }
+                                } else {
+                                    echo '-';
+                                }
+                                ?>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </main>
+    </div>
+    <?php include 'footer.php'; ?>
+</body>
+
+</html>
